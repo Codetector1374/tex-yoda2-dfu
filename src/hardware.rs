@@ -111,7 +111,7 @@ pub fn initialize(core: &mut Peripherals) -> Result<(), ()> {
     Ok(())
 }
 
-/// Configure PC15 -> diode -> switch -> PC4 for boot and live key sampling.
+/// Configure PC15 -> diode -> switch -> PC4 for the boot-time key sample.
 /// Forward diode current flows from PC15's pull-up into PC4 driven low.
 pub fn initialize_boot_key() {
     CKCU.ahbccr().modify(|r| r.set_pcen(true));
@@ -135,7 +135,11 @@ pub fn initialize_boot_key() {
 }
 
 pub fn boot_key_held() -> bool {
-    !GPIOC.dinr().read().din15()
+    let held = !GPIOC.dinr().read().din15();
+    GPIOC.dircr().modify(|r| r.set_dir4(false));
+    GPIOC.pur().modify(|r| r.set_pu15(false));
+    GPIOC.iner().modify(|r| r.set_inen15(false));
+    held
 }
 
 /// PB1 sinks LED current. Preload high before enabling the push-pull output.
@@ -299,9 +303,6 @@ pub unsafe fn jump_to_application() -> ! {
     let entry = read_volatile((APP_BASE + 4) as *const u32);
     cortex_m::interrupt::disable();
     set_led(false);
-    GPIOC.dircr().modify(|r| r.set_dir4(false));
-    GPIOC.pur().modify(|r| r.set_pu15(false));
-    GPIOC.iner().modify(|r| r.set_inen15(false));
     if CKCU.ahbccr().read().usben() {
         stop_usb();
     }

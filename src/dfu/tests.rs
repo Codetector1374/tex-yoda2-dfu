@@ -199,16 +199,46 @@ fn busy_window_is_ten_milliseconds_even_for_one_byte_and_wraps() {
     engine.complete();
     get_status(&mut engine);
     engine.complete();
-    assert_eq!(engine.prepare_in(&request(UsbDirection::In, 5, 0, 1), &mut [0]), Err(Status::ErrStalledPacket));
+    let mut state = [0];
+    assert_eq!(engine.prepare_in(&request(UsbDirection::In, 5, 0, 1), &mut state), Ok(1));
+    assert_eq!(state[0], State::DownloadBusy as u8);
     engine.tick(u32::MAX - 5);
     engine.tick(u32::MAX - 4);
     assert!(!engine.ready);
     engine.tick(3);
     assert_eq!(engine.state, State::DownloadBusy);
-    assert_eq!(engine.prepare_in(&request(UsbDirection::In, 5, 0, 1), &mut [0]), Err(Status::ErrStalledPacket));
+    assert_eq!(engine.prepare_in(&request(UsbDirection::In, 5, 0, 1), &mut state), Ok(1));
+    assert_eq!(state[0], State::DownloadBusy as u8);
     engine.tick(4);
     assert_eq!(engine.state, State::DownloadSync);
     assert_eq!(get_status(&mut engine)[4], State::DownloadIdle as u8);
+}
+
+#[test]
+fn early_status_setup_reports_busy_without_cancelling_the_download() {
+    let mut dfu = Dfu::new(MemoryFlash::new());
+    dfu.set_configured(true);
+    let download = request(UsbDirection::Out, 1, 0, 1);
+    dfu.setup(&download);
+    dfu.request_out(&download, &[0]).unwrap();
+    dfu.status_complete(&download);
+    let status = request(UsbDirection::In, 3, 0, 6);
+    let mut reply = [0; 6];
+    dfu.setup(&status);
+    dfu.request_in(&status, &mut reply).unwrap();
+    dfu.status_complete(&status);
+    dfu.tick(0);
+    dfu.setup(&status);
+    assert_eq!(dfu.request_in(&status, &mut reply), Ok(6));
+    assert_eq!(reply, [Status::Ok as u8, 10, 0, 0, State::DownloadBusy as u8, 0]);
+    dfu.status_complete(&status);
+    assert_eq!(dfu.state(), State::DownloadBusy);
+    assert!(dfu.engine.pending);
+    dfu.tick(10);
+    dfu.setup(&status);
+    dfu.request_in(&status, &mut reply).unwrap();
+    assert_eq!(reply[4], State::DownloadIdle as u8);
+    assert_eq!(dfu.status(), Status::Ok);
 }
 
 #[test]

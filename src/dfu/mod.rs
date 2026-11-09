@@ -138,7 +138,8 @@ impl<F: Flash> Dfu<F> {
         self.reject_current = false;
         if self.relevant(req) {
             self.engine.activity = true;
-            if self.engine.check_window().is_err() {
+            let status_query = req.direction == UsbDirection::In && matches!(req.request, 3 | 5);
+            if !status_query && self.engine.check_window().is_err() {
                 // Judge OUT at SETUP, not after its potentially long data stage.
                 self.reject_current = true;
                 self.engine.reject(Status::ErrStalledPacket);
@@ -372,7 +373,11 @@ impl<F: Flash> Engine<F> {
     }
 
     fn prepare_in(&mut self, req: &Request, buffer: &mut [u8]) -> Result<usize, Status> {
-        self.check_window()?;
+        // Hosts may poll before our last tick has expired the advertised window.
+        // Report the current busy state; never turn a status query into an error.
+        if !matches!(req.request, 3 | 5) {
+            self.check_window()?;
+        }
         if req.direction != UsbDirection::In || buffer.len() < req.length as usize {
             return Err(Status::ErrStalledPacket);
         }

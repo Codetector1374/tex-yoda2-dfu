@@ -2,8 +2,8 @@
 //!
 //! A held PC15 -> diode -> switch -> PC4 key latches DFU entry at reset.
 //! Otherwise a valid application at 0x2000 starts immediately.
-//! Empty or invalid applications remain in DFU. PB1 blinks twice as fast while
-//! the key is pressed in DFU and returns to normal speed when released.
+//! Empty or invalid applications remain in DFU. PB1 indicates the DFU state;
+//! the recovery key is sampled only for the boot-time application decision.
 //! Hardware assumptions: 8MHz HSE, internal USB D+ pull-up, 63KiB main flash,
 //! 16KiB SRAM. Clock startup failure stops before USB or flash programming.
 
@@ -18,13 +18,12 @@ mod usb_hw;
 core::arch::global_asm!(include_str!("memcpy.s"));
 core::arch::global_asm!(include_str!("memclr.s"));
 
-use bootloader::dfu::{application_valid, Dfu};
+use bootloader::dfu::{application_valid, Dfu, State};
 use cortex_m_rt::entry;
 use hardware::{HardwareFlash, Millis};
 use bootloader::usb::Device;
 use usb_hw::Ht32Ep0;
 
-const LED_HALF_PERIOD_MS: u32 = 250;
 
 extern "C" {
     fn DefaultHandler();
@@ -58,21 +57,32 @@ fn main() -> ! {
     let mut clock = Millis::new();
     let mut led_changed = 0u32;
     let mut led_on = true;
+    let mut led_mode = (Some(250u32), true);
 
     loop {
         device.poll(&mut dfu);
         let now = clock.now();
-        let led_half_period_ms = if hardware::boot_key_held() {
-            LED_HALF_PERIOD_MS / 2
-        } else {
-            LED_HALF_PERIOD_MS
-        };
-        if now.wrapping_sub(led_changed) >= led_half_period_ms {
-            led_changed = now;
-            led_on = !led_on;
-            hardware::set_led(led_on);
-        }
         dfu.tick(now);
+        let mode = match dfu.state() {
+            State::Idle => (Some(250), true),
+            State::DownloadSync | State::DownloadBusy | State::DownloadIdle
+            | State::UploadIdle => (Some(125), true),
+            State::ManifestSync | State::Manifest => (Some(50), true),
+            State::Error => (None, true),
+            State::ManifestWaitReset => (None, false),
+        };
+        if mode != led_mode {
+            led_mode = mode;
+            led_changed = now;
+            led_on = mode.1;
+            hardware::set_led(led_on);
+        } else if let Some(period) = mode.0 {
+            if now.wrapping_sub(led_changed) >= period {
+                led_changed = now;
+                led_on = !led_on;
+                hardware::set_led(led_on);
+            }
+        }
         if dfu.should_reset() {
             hardware::set_led(false);
             hardware::stop_usb();

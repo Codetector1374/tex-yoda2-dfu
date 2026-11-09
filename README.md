@@ -22,11 +22,11 @@ A polling, `no_std` USB DFU bootloader, without a HAL, heap, RTOS, or async exec
 - SRAM: `[0x20000000, 0x20004000)` (16 KiB).
 - Erase pages: 1024 bytes; program units: aligned 32-bit words.
 - USB endpoint SRAM: `0x400AA000`, 1024 bytes; internal D+ pull-up.
-- PB1 drives an active-low status LED. While in DFU, the live key state selects 125 ms on/off when pressed and 250 ms on/off when released. A free-running core-clock SysTick supplies polling time without interrupts or debug/trace dependencies, including FMC timeouts. The LED is turned off before application handoff or a DFU-triggered reset.
+- PB1 drives an active-low DFU status LED. Idle: 250 ms on/off; download/upload: 125 ms on/off; manifestation: 50 ms on/off; error: solid on; completed/waiting for reset: off. The recovery key does not affect blinking. SysTick supplies polling time without interrupts or debug/trace dependencies.
 
 The option-byte region and bootloader are never application download targets.
-The application must be linked at **0x2000**. The existing Yoda2 QMK linker script at **0x3000 is incompatible**.
-Recovery key: **PC15 -> diode -> switch -> PC4**, with the diode conducting from PC15 to PC4. PC4 is driven low and PC15 is pulled up, with 1 ms settling before the boot-time sample. That sample alone decides application handoff. The pins remain configured for live key reads in DFU; PC4 is released to input and PC15's pull-up/input buffer disabled before application handoff.
+The application must be linked at **0x2000**, as the current Tex Yoda 2 QMK target is.
+Recovery key: **PC15 -> diode -> switch -> PC4**, conducting from PC15 to PC4. PC4 is driven low and PC15 pulled up for a single sample after 1 ms settling. That sample decides application handoff. PC4 is then released to input and PC15's pull-up/input buffer disabled, including while staying in DFU.
 
 ## Build
 
@@ -39,10 +39,10 @@ sh build.sh
 ```
 
 Do not program this over a working recovery bootloader until you have a saved flash backup and working SWD recovery. Building and host tests do not establish hardware safety or USB enumeration.
-The direct `src/usb_hw.rs` backend has been flashed and verified over SWD, enumerated as `feed:6969`, and uploaded the entire 56,320-byte application region over DFU with byte-for-byte agreement against SWD readback. DFU download/programming and recovery under interruption remain untested on hardware.
+The direct `src/usb_hw.rs` backend has been flashed and verified over SWD, enumerated as `feed:6969`, and uploaded the entire 56,320-byte application region over DFU with byte-for-byte agreement against SWD readback. Full QMK application download/programming is now verified through DFU; recovery under interruption remains untested on hardware.
 
-Verified with rustc 1.99.1: 10 DFU-core tests and 17 compact USB packet tests pass.
-The live-key release binary is 7,044 bytes (1,148 bytes remain). It builds successfully and was programmed/readback-verified with probe-rs over SWD. Live press/release blink-rate transitions still need board-side confirmation. Visible blinking was confirmed on the preceding SysTick LED revision.
+All 28 DFU-core/USB packet library tests pass, including early status polling.
+The status-LED/polling-fix binary is 7,292 bytes (900 bytes remain) and was programmed/readback-verified over SWD. A full 23,684-byte QMK application download then completed through dfu-util, reached MANIFEST-WAIT-RESET with status OK, and booted into enumerated keyboard/mouse HID collections. dfu-util returned 74 despite printing Done after reset; runtime enumeration independently confirms handoff.
 The size guard is intentionally strict; compiler/dependency updates may change the footprint.
 Optional manufacturer/product/serial strings are omitted; identify the device by VID:PID.
 
@@ -57,7 +57,11 @@ dfu-util -d feed:6969 -a 0 -t 512 -D application.bin
 dfu-util -d feed:6969 -a 0 -t 512 -U application-readback.bin
 ```
 
-Hold the recovery key while resetting to remain in DFU. With the key released at boot, plausible stack/reset vectors at 0x2000 cause immediate application handoff before USB startup; empty or invalid vectors stay in DFU. Once in DFU, pressing the key doubles blink speed and releasing restores normal speed; neither changes the boot decision. There is no timed USB entry window. After successful manifestation, reset with the key released to start the application.
+Hold the recovery key while resetting to remain in DFU. With the key released at boot, plausible stack/reset vectors at 0x2000 cause immediate application handoff before USB startup; empty or invalid vectors stay in DFU. After this one-time decision, the key has no effect on the bootloader. PB1 follows the DFU protocol state. There is no timed USB entry window. After successful manifestation, reset with the key released to start the application.
+
+GETSTATUS/GETSTATE remain available during the advertised busy polling window.
+An early status request reports the current busy state instead of latching
+ERR_STALLEDPKT; download, abort and other state-changing requests remain gated.
 
 The writer bounds every erase/program operation, verifies flash results, and defers both application vectors until manifestation. The initial stack pointer is the final commit word. An interrupted download is not made bootable by the bootloader. This is a recovery mechanism, **not signature authentication, anti-rollback, or a power-fail-atomic dual-image updater**.
 
