@@ -1,9 +1,9 @@
 //! HT32F1654 / TEX Yoda II polling USB DFU bootloader.
 //!
-//! Every reset opens a 1500ms USB boot window. A recognized DFU request latches
-//! bootloader entry; without activity a valid application at 0x2000 is started.
-//! Invalid applications always remain in DFU. No unverified keyboard matrix or
-//! software-entry magic is used: start the host DFU tool before resetting.
+//! A held PC15 -> diode -> switch -> PC4 key latches DFU entry at reset.
+//! Otherwise a valid application at 0x2000 starts immediately.
+//! Empty or invalid applications remain in DFU. PB1 blinks twice as fast while
+//! the key is pressed in DFU and returns to normal speed when released.
 //! Hardware assumptions: 8MHz HSE, internal USB D+ pull-up, 63KiB main flash,
 //! 16KiB SRAM. Clock startup failure stops before USB or flash programming.
 
@@ -24,7 +24,7 @@ use hardware::{HardwareFlash, Millis};
 use bootloader::usb::Device;
 use usb_hw::Ht32Ep0;
 
-const BOOT_WINDOW_MS: u32 = 1500;
+const LED_HALF_PERIOD_MS: u32 = 250;
 
 extern "C" {
     fn DefaultHandler();
@@ -44,26 +44,39 @@ fn main() -> ! {
     if hardware::initialize(&mut core).is_err() {
         hardware::halt();
     }
+    hardware::initialize_led();
 
+    hardware::initialize_boot_key();
+    let key_held = hardware::boot_key_held();
     let flash = HardwareFlash::new();
-    let valid_application = application_valid(&flash);
+    if !key_held && application_valid(&flash) {
+        unsafe { hardware::jump_to_application() }
+    }
     let bus = Ht32Ep0::new();
     let mut dfu = Dfu::new(flash);
     let mut device = Device::new(bus);
     let mut clock = Millis::new();
+    let mut led_changed = 0u32;
+    let mut led_on = true;
 
     loop {
         device.poll(&mut dfu);
         let now = clock.now();
+        let led_half_period_ms = if hardware::boot_key_held() {
+            LED_HALF_PERIOD_MS / 2
+        } else {
+            LED_HALF_PERIOD_MS
+        };
+        if now.wrapping_sub(led_changed) >= led_half_period_ms {
+            led_changed = now;
+            led_on = !led_on;
+            hardware::set_led(led_on);
+        }
         dfu.tick(now);
         if dfu.should_reset() {
+            hardware::set_led(false);
             hardware::stop_usb();
             cortex_m::peripheral::SCB::sys_reset();
-        }
-        if now >= BOOT_WINDOW_MS && !dfu.has_activity() && valid_application {
-            // No DFU request means no flash command can have changed the image
-            // validated before moving flash ownership into the class.
-            unsafe { hardware::jump_to_application() }
         }
     }
 }

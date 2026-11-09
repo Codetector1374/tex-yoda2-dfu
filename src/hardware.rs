@@ -8,12 +8,13 @@
 
 use bootloader::dfu::{Flash, Status, APP_BASE, FLASH_END};
 use core::ptr::{read_volatile, write_volatile};
-use cortex_m::{peripheral::DWT, Peripherals};
-use ht32_pac::{CKCU, FMC, PWRCU, RSTCU, USB};
+use cortex_m::{peripheral::{syst::SystClkSource, SYST}, Peripherals};
+use ht32_pac::{AFIO, CKCU, FMC, GPIOB, GPIOC, PWRCU, RSTCU, USB};
 
 const CYCLES_PER_MS: u32 = 72_000;
 const STARTUP_POLLS: u32 = 1_000_000;
 const FLASH_TIMEOUT_CYCLES: u32 = 100 * CYCLES_PER_MS;
+const COUNTER_MASK: u32 = 0x00ff_ffff;
 const PAGE_SIZE: u32 = 1024;
 // Logical field values: OPM occupies bits 4:1 in the hardware register.
 const FMC_IDLE: u8 = 0x6;
@@ -93,17 +94,70 @@ pub fn initialize(core: &mut Peripherals) -> Result<(), ()> {
     wait_for(|| PWRCU.baktest().read().baktest() == 0x27)?;
     FMC.oier().write_value(Default::default());
 
-    // CYCCNT is implemented by this Cortex-M3. Polling it avoids interrupts
-    // and accounts for time spent inside synchronous bounded FMC commands.
-    core.DCB.enable_trace();
-    core.DWT.set_cycle_count(0);
-    core.DWT.enable_cycle_counter();
-    let before = DWT::cycle_count();
+    // Free-running core-clock SysTick, without interrupts or debug/trace state.
+    // Its 233ms wrap period exceeds the longest bounded FMC command (100ms).
+    core.SYST.disable_counter();
+    core.SYST.disable_interrupt();
+    core.SYST.set_clock_source(SystClkSource::Core);
+    core.SYST.set_reload(COUNTER_MASK);
+    core.SYST.clear_current();
+    core.SYST.enable_counter();
     cortex_m::asm::delay(16);
-    if DWT::cycle_count() == before {
+    let before = SYST::get_current();
+    cortex_m::asm::delay(16);
+    if SYST::get_current() == before {
         return Err(());
     }
     Ok(())
+}
+
+/// Configure PC15 -> diode -> switch -> PC4 for boot and live key sampling.
+/// Forward diode current flows from PC15's pull-up into PC4 driven low.
+pub fn initialize_boot_key() {
+    CKCU.ahbccr().modify(|r| r.set_pcen(true));
+    CKCU.apbccr0().modify(|r| r.set_afioen(true));
+    GPIOC.dircr().modify(|r| {
+        r.set_dir15(false);
+        r.set_dir4(false);
+    });
+    AFIO.gpccfghr().modify(|r| r.set_pccfg15(1));
+    AFIO.gpccfglr().modify(|r| r.set_pccfg4(1));
+    GPIOC.pdr().modify(|r| r.set_pd15(false));
+    GPIOC.pur().modify(|r| r.set_pu15(true));
+    GPIOC.iner().modify(|r| r.set_inen15(true));
+    GPIOC.rr().write(|r| r.set_rst4(true));
+    GPIOC.odr().modify(|r| r.set_od4(false));
+    GPIOC.pur().modify(|r| r.set_pu4(false));
+    GPIOC.pdr().modify(|r| r.set_pd4(false));
+    GPIOC.dircr().modify(|r| r.set_dir4(true));
+    // Allow the pulled-up sense line and diode path to settle (1 ms at 72 MHz).
+    cortex_m::asm::delay(CYCLES_PER_MS);
+}
+
+pub fn boot_key_held() -> bool {
+    !GPIOC.dinr().read().din15()
+}
+
+/// PB1 sinks LED current. Preload high before enabling the push-pull output.
+pub fn initialize_led() {
+    CKCU.ahbccr().modify(|r| r.set_pben(true));
+    CKCU.apbccr0().modify(|r| r.set_afioen(true));
+    GPIOB.srr().write(|r| r.set_set1(true));
+    GPIOB.odr().modify(|r| r.set_od1(false));
+    GPIOB.pur().modify(|r| r.set_pu1(false));
+    GPIOB.pdr().modify(|r| r.set_pd1(false));
+    GPIOB.iner().modify(|r| r.set_inen1(false));
+    AFIO.gpbcfglr().modify(|r| r.set_pbcfg1(1)); // GPIO function.
+    GPIOB.dircr().modify(|r| r.set_dir1(true));
+    set_led(true);
+}
+
+pub fn set_led(on: bool) {
+    if on {
+        GPIOB.rr().write(|r| r.set_rst1(true));
+    } else {
+        GPIOB.srr().write(|r| r.set_set1(true));
+    }
 }
 
 /// Enable and reset USB, leaving the device disconnected until bus enable.
@@ -127,8 +181,8 @@ pub fn stop_usb() {
     cortex_m::asm::dsb();
 }
 
-/// Wrapping CYCCNT accumulation. The maximum gap between samples is a 100ms
-/// FMC command, well below CYCCNT's approximately 59-second wrap period.
+/// Accumulate the 24-bit down-counter, sampled at least once per 233ms wrap.
+/// Synchronous FMC commands are bounded to 100ms.
 pub struct Millis {
     previous: u32,
     remainder: u32,
@@ -137,12 +191,12 @@ pub struct Millis {
 
 impl Millis {
     pub fn new() -> Self {
-        Self { previous: DWT::cycle_count(), remainder: 0, millis: 0 }
+        Self { previous: SYST::get_current(), remainder: 0, millis: 0 }
     }
 
     pub fn now(&mut self) -> u32 {
-        let cycles = DWT::cycle_count();
-        let delta = cycles.wrapping_sub(self.previous);
+        let cycles = SYST::get_current();
+        let delta = self.previous.wrapping_sub(cycles) & COUNTER_MASK;
         self.previous = cycles;
         let elapsed = delta + self.remainder;
         self.millis = self.millis.wrapping_add(elapsed / CYCLES_PER_MS);
@@ -192,10 +246,10 @@ impl HardwareFlash {
         FMC.wrdr().write(|r| r.set_wrdb(word));
         FMC.ocmr().write(|r| r.set_cmd(command));
         cortex_m::asm::dsb();
-        let start = DWT::cycle_count();
+        let start = SYST::get_current();
         FMC.opcr().write(|r| r.set_opm(FMC_COMMIT));
         while FMC.opcr().read().opm() != FMC_FINISHED {
-            if DWT::cycle_count().wrapping_sub(start) >= FLASH_TIMEOUT_CYCLES {
+            if start.wrapping_sub(SYST::get_current()) & COUNTER_MASK >= FLASH_TIMEOUT_CYCLES {
                 self.faulted = true;
                 return Err(if erase { Status::ErrErase } else { Status::ErrWrite });
             }
@@ -244,7 +298,13 @@ pub unsafe fn jump_to_application() -> ! {
     let stack = read_volatile(APP_BASE as *const u32);
     let entry = read_volatile((APP_BASE + 4) as *const u32);
     cortex_m::interrupt::disable();
-    stop_usb();
+    set_led(false);
+    GPIOC.dircr().modify(|r| r.set_dir4(false));
+    GPIOC.pur().modify(|r| r.set_pu15(false));
+    GPIOC.iner().modify(|r| r.set_inen15(false));
+    if CKCU.ahbccr().read().usben() {
+        stop_usb();
+    }
     // Architectural core registers, not a second vendor register mapping.
     write_volatile(0xe000_e010 as *mut u32, 0); // SysTick CTRL
     write_volatile(0xe000_e018 as *mut u32, 0); // SysTick VAL
