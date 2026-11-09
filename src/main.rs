@@ -11,6 +11,7 @@
 #![no_main]
 
 mod hardware;
+mod usb_hw;
 
 // Keep memory helpers small and prevent LLVM from replacing their loops with
 // calls to generic compiler-builtins implementations.
@@ -19,8 +20,9 @@ core::arch::global_asm!(include_str!("memclr.s"));
 
 use bootloader::dfu::{application_valid, Dfu};
 use cortex_m_rt::entry;
-use hardware::{HardwareFlash, Millis, Usb};
+use hardware::{HardwareFlash, Millis};
 use bootloader::usb::Device;
+use usb_hw::Ht32Ep0;
 
 const BOOT_WINDOW_MS: u32 = 1500;
 
@@ -45,7 +47,7 @@ fn main() -> ! {
 
     let flash = HardwareFlash::new();
     let valid_application = application_valid(&flash);
-    let bus = ht32_usbd::UsbBus::new(Usb);
+    let bus = Ht32Ep0::new();
     let mut dfu = Dfu::new(flash);
     let mut device = Device::new(bus);
     let mut clock = Millis::new();

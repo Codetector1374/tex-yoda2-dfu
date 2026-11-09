@@ -106,29 +106,14 @@ pub fn initialize(core: &mut Peripherals) -> Result<(), ()> {
     Ok(())
 }
 
-pub struct Usb;
-
-// SAFETY: the generated HT32F1654 USB handle has the register layout expected
-// by ht32-usbd; its dedicated 1KiB endpoint SRAM is not otherwise accessed.
-// Initialization above establishes the clock/power prerequisites, and this
-// singleton is only instantiated once by main, with all NVIC lines disabled.
-unsafe impl ht32_usbd::UsbPeripheral for Usb {
-    const REGISTERS: *const () = USB.as_ptr().cast();
-    const DP_PULL_UP_FEATURE: bool = true;
-    const EP_MEMORY: *const () = 0x400a_a000 as *const ();
-    const EP_MEMORY_SIZE: usize = 1024;
-
-    fn enable(&self) {
-        CKCU.ahbccr().modify(|r| r.set_usben(true));
-        RSTCU.ahbprstr().write(|r| r.set_usbrst(true));
-        cortex_m::asm::dsb();
-        RSTCU.ahbprstr().write_value(Default::default());
-        USB.csr().write_value(Default::default()); // Disconnect until enabled.
-    }
-
-    fn dp_pull_up(&mut self) {
-        // The bus driver controls the internal D+ pull-up itself.
-    }
+/// Enable and reset USB, leaving the device disconnected until bus enable.
+/// Clock and backup-domain prerequisites must already be initialized.
+pub fn enable_usb() {
+    CKCU.ahbccr().modify(|r| r.set_usben(true));
+    RSTCU.ahbprstr().write(|r| r.set_usbrst(true));
+    cortex_m::asm::dsb();
+    RSTCU.ahbprstr().write_value(Default::default());
+    USB.csr().write_value(Default::default()); // Disconnect until enabled.
 }
 
 /// Disconnect and quiesce USB before resetting or transferring execution.

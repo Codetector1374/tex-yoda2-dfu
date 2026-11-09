@@ -8,10 +8,11 @@ A polling, `no_std` USB DFU bootloader, without a HAL, heap, RTOS, or async exec
 - `ht32-pac`: full SVD-generated chiptool-style register API, with global peripheral constants and copyable register handles. No `Peripherals::take()` requirement. See its generation instructions and input notices.
 - `src/dfu/`: DFU protocol, bounded streaming image programming, and host tests.
 - `src/usb.rs`: compact EP0-only USB transport and packet-level host tests.
+- `src/usb_hw.rs`: binary-only fixed EP0 hardware backend, using the same generated `ht32-pac` as clock and flash support.
 - `src/main.rs`, `src/hardware.rs`: Cortex-M3 startup, clocks, FMC, and application handoff, built only as the firmware binary.
 - `src/memcpy.s`, `src/memclr.s`: compact C/AEABI copy and zeroing helpers. Byte accesses support arbitrary alignment and avoid generic implementations; throughput is traded for flash size.
 - Root `Cargo.toml`: the single `bootloader` package, with a host-testable library and the hardware binary.
-- `../chiptool`, `../ht32-usbd`: sibling local source forks, each retaining its Git history and upstream license. No remote GitHub forks have been created (`gh` is unavailable). This firmware Git repository is `ht32-rs/usb_dfu_bootloader/`.
+- `../chiptool`: sibling local source fork used for PAC generation, retaining its Git history and upstream license. `../ht32-usbd` remains an unused reference fork, not a firmware dependency. No remote GitHub forks have been created (`gh` is unavailable). This firmware Git repository is `ht32-rs/usb_dfu_bootloader/`.
 
 ## Hardware and memory contract
 
@@ -37,9 +38,10 @@ sh build.sh
 ```
 
 Do not program this over a working recovery bootloader until you have a saved flash backup and working SWD recovery. Building and host tests do not establish hardware safety or USB enumeration.
+The direct `src/usb_hw.rs` backend has been flashed and verified over SWD, enumerated as `feed:6969`, and uploaded the entire 56,320-byte application region over DFU with byte-for-byte agreement against SWD readback. DFU download/programming and recovery under interruption remain untested on hardware.
 
 Verified with rustc 1.99.1: 10 DFU-core tests and 17 compact USB packet tests pass.
-The release binary is 6,956 bytes (1,236 bytes remain). Compact zeroing and fully initialized EP0 buffers save another 292 bytes. Dependency-generated compiler warnings remain.
+The release binary is 6,628 bytes (1,564 bytes remain). The direct-PAC EP0 backend saves 328 bytes versus the prior 6,956-byte build and is retained.
 The size guard is intentionally strict; compiler/dependency updates may change the footprint.
 Optional manufacturer/product/serial strings are omitted; identify the device by VID:PID.
 
@@ -58,9 +60,9 @@ A valid application gets a short DFU entry window after reset. Start the host do
 
 The writer bounds every erase/program operation, verifies flash results, and defers both application vectors until manifestation. The initial stack pointer is the final commit word. An interrupted download is not made bootable by the bootloader. This is a recovery mechanism, **not signature authentication, anti-rollback, or a power-fail-atomic dual-image updater**.
 
-## Source forks
+## Sources and dependencies
 
-- `../ht32-usbd`: `https://github.com/ht32-rs/ht32-usbd`, base `eb2b941742582fdd10affd72f461073d85e39d54` (MIT). This local fork is specialized to EP0 only for the 8 KiB DFU image; it is not a HID/CDC bus driver.
+- `src/usb_hw.rs` implements the published `usb-device` bus trait directly using the root generated `ht32-pac`; there is no second PAC or `ht32-usbd` dependency. EP0 SRAM is fixed at `0x400AA000`: 8 SETUP bytes at offset 0, 64 IN bytes at offset 8, and 64 OUT bytes at offset 72. The unused sibling `../ht32-usbd` reference is based on `https://github.com/ht32-rs/ht32-usbd`, commit `eb2b941742582fdd10affd72f461073d85e39d54` (MIT).
 - `usb-device` 0.3.2 comes from crates.io without patches, providing bus traits and request/endpoint types. No USB resource allocator or generic device runtime is used. Interface 0 and EP0's 64-byte IN/OUT buffers are fixed; the transport owns the initialized bus directly.
 - `../chiptool`: `https://github.com/embassy-rs/chiptool`, base `e8902440a6eee471a9b14b38ee1cd2e526d2c495` (see upstream licenses).
 

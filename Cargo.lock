@@ -24,7 +24,6 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "ht32-pac",
- "ht32-usbd",
  "usb-device",
 ]
 
@@ -124,15 +123,6 @@ dependencies = [
 [[package]]
 name = "ht32-pac"
 version = "0.1.0"
-
-[[package]]
-name = "ht32-usbd"
-version = "0.1.1"
-dependencies = [
- "cortex-m",
- "usb-device",
- "vcell",
-]
 
 [[package]]
 name = "nb"
