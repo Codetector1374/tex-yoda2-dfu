@@ -1,0 +1,35 @@
+[package]
+name = "bootloader"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Polling USB DFU bootloader for the TEX Yoda II HT32F1654"
+build = "build.rs"
+
+[dependencies]
+ht32-pac = { path = "ht32-pac" }
+ht32-usbd = { path = "../ht32-usbd" }
+usb-device = "0.3.2"
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }
+cortex-m-rt = { version = "0.7.5", features = ["device"] }
+
+[[bin]]
+name = "bootloader"
+path = "src/main.rs"
+test = false
+bench = false
+
+[workspace]
+resolver = "2"
+members = ["ht32-pac"]
+default-members = ["."]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 2
+
+[profile.dev]
+panic = "abort"

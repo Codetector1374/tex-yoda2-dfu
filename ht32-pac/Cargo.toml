@@ -1,0 +1,15 @@
+[package]
+name = "ht32-pac"
+version = "0.1.0"
+edition = "2021"
+description = "Ownership-free chiptool-generated PAC for Holtek HT32F1653/HT32F1654"
+license = "MIT OR Apache-2.0"
+
+[lib]
+path = "src/lib.rs"
+
+[package.metadata.generation]
+chiptool-repository = "https://github.com/embassy-rs/chiptool"
+chiptool-revision = "e8902440a6eee471a9b14b38ee1cd2e526d2c495"
+svd = "svd/HT32F1653_54.svd"
+command = "python3 generate.py"

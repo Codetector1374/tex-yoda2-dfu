@@ -1,0 +1,32 @@
+The original svd/HT32F1653_54.svd is copied verbatim from the project's
+local docs/HT32F1653_54.svd, device version 1.1. Its redistribution terms
+are reproduced below and remain in the input file. The generated register
+names, fields, addresses and descriptions originate in this file.
+
+Copyright (C) 2010 ARM Limited. All rights reserved.
+
+ARM Limited (ARM) is supplying this SVD description for use with Cortex-M3
+processor based microcontrollers. This file and or content can be freely
+distributed within development tools that are supporting such ARM based
+processors.
+
+THIS SOFTWARE IS PROVIDED "AS IS". NO WARRANTIES, WHETHER EXPRESS, IMPLIED
+OR STATUTORY, INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE APPLY TO THIS SOFTWARE.
+ARM SHALL NOT, IN ANY CIRCUMSTANCES, BE LIABLE FOR SPECIAL, INCIDENTAL, OR
+CONSEQUENTIAL DAMAGES, FOR ANY REASON WHATSOEVER.
+
+Generated Rust support code comes from embassy-rs/chiptool, revision
+e8902440a6eee471a9b14b38ee1cd2e526d2c495, under MIT OR Apache-2.0.
+See LICENSE-MIT and LICENSE-APACHE.
+
+GPIO register normalization and USB endpoint clustering follow the design
+of ht32-rs/ht32-rs revision 88c62cdc448ad5028d51cd6a48843305ed29a1a1:
+  devices/ht32f1653_54.yaml
+  devices/common_patches/usb/endpoint_cluster.yaml
+  peripherals/gpio/gpio_f1.yaml
+https://github.com/ht32-rs/ht32-rs/tree/88c62cdc448ad5028d51cd6a48843305ed29a1a1
+No upstream implementation is copied: generate.py applies these structural
+conventions directly to the original SVD. The PWRCU base/offset convention
+and read-only BAKTEST access follow HT32F1653/HT32F1654 User Manual Rev. 1.01,
+pages 71 and 75; absolute register addresses are unchanged.
